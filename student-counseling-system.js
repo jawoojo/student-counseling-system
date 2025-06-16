@@ -8,12 +8,12 @@ const CONFIG = {
 
   // '학생목록' 시트의 열 번호 설정 (A열=1, B열=2, ...)
   col: {
-    number: 1,     // 번호 열
-    name: 2,       // 이름 열
-    email: 3,      // 이메일 열 (선택사항, 없어도 됨)
-    sheetLink: 4,  // 학생 파일 링크가 저장될 열
-    lastSync: 5,   // 마지막 동기화 시간이 기록될 열
-    status: 6      // 동기화 상태/오류가 기록될 열
+    number: 1,    // 번호 열
+    name: 2,      // 이름 열
+    email: 3,     // 이메일 열 (이메일 발송에 사용)
+    sheetLink: 4, // 학생 파일 링크가 저장될 열
+    lastSync: 5,  // 마지막 동기화 시간이 기록될 열
+    status: 6     // 동기화 상태/오류가 기록될 열
   },
 
   // 구글 드라이브 폴더 설정
@@ -32,6 +32,8 @@ function onOpen() {
   ui.createMenu('학생 데이터 관리')
     .addItem('① 학생 데이터 가져오기 (Pull)', 'pullData_Menu')
     .addItem('② 현재 시트 학생에게 보내기 (Push)', 'pushData_Menu')
+    .addSeparator()
+    .addItem('③ 학생 파일 링크 이메일 보내기', 'sendStudentFileLinksByEmail_Menu') // 새 메뉴 추가
     .addSeparator()
     .addItem('자동 동기화 켜기 (파일 열 때)', 'enableAutoSyncOnOpen')
     .addItem('자동 동기화 끄기 (파일 열 때)', 'disableAutoSyncOnOpen')
@@ -364,7 +366,7 @@ function pullDataCore(isSilent = false, studentsToPull = null) {
         if (!isSilent) masterListSheet.getRange(row, CONFIG.col.status).setValue(`Pull 완료 (${lastUpdatedTime.toLocaleTimeString()})`);
         updatedCount++;
       } else {
-         if (!isSilent) masterListSheet.getRange(row, CONFIG.col.status).setValue("최신 상태");
+          if (!isSilent) masterListSheet.getRange(row, CONFIG.col.status).setValue("최신 상태");
       }
 
     } catch (e) {
@@ -483,4 +485,92 @@ function disableAutoSyncOnOpen() {
   } else {
     SpreadsheetApp.getUi().alert("현재 설정된 자동 동기화 기능이 없습니다.");
   }
+}
+
+// =========================================================================
+// SCRIPT 6: 학생 파일 링크 이메일 발송 기능 (새로 추가)
+// =========================================================================
+/**
+ * '학생목록' 시트에 있는 이메일 주소로 학생 개개인의 상담 카드 링크를 발송합니다.
+ */
+function sendStudentFileLinksByEmail_Menu() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const masterListSheet = ss.getSheetByName(CONFIG.masterListSheetName);
+
+  if (!masterListSheet) {
+    ui.alert(`오류: '${CONFIG.masterListSheetName}' 시트를 찾을 수 없습니다. 시트 이름을 확인해주세요.`);
+    return;
+  }
+
+  const response = ui.alert(
+    '이메일 발송 확인',
+    `'${CONFIG.masterListSheetName}' 시트에 있는 모든 학생의 이메일 주소로 상담 카드 링크를 발송하시겠습니까?`,
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response !== ui.Button.YES) {
+    ui.alert('이메일 발송이 취소되었습니다.');
+    return;
+  }
+
+  ss.toast("학생 파일 링크 이메일 발송을 시작합니다...", "이메일 발송", -1);
+
+  const data = masterListSheet.getDataRange().getValues();
+  let sentCount = 0;
+  let failCount = 0;
+
+  // 헤더 행을 건너뛰고 1번째 행부터 시작
+  for (let i = 1; i < data.length; i++) {
+    const row = i + 1; // 실제 시트 행 번호 (1부터 시작)
+    const studentName = data[i][CONFIG.col.name - 1];
+    const studentEmail = data[i][CONFIG.col.email - 1];
+    const studentLink = data[i][CONFIG.col.sheetLink - 1];
+
+    // 이름, 이메일, 링크 중 하나라도 없으면 건너뛰고 상태 업데이트
+    if (!studentName || !studentEmail || !studentLink || !isValidEmail(studentEmail)) {
+      let statusMessage = "이메일 발송 실패: ";
+      if (!studentName) statusMessage += "이름 없음. ";
+      if (!studentEmail) statusMessage += "이메일 없음. ";
+      else if (!isValidEmail(studentEmail)) statusMessage += "유효하지 않은 이메일 주소. ";
+      if (!studentLink) statusMessage += "링크 없음. ";
+      masterListSheet.getRange(row, CONFIG.col.status).setValue(statusMessage.trim());
+      failCount++;
+      continue;
+    }
+
+    ss.toast(`${studentName} 학생에게 이메일 발송 중...`, "이메일 발송", 5);
+
+    try {
+      const subject = `${studentName} 학생 상담 카드 링크입니다.`;
+      const body = `안녕하세요, ${studentName} 학생.\n\n` +
+                   `상담 카드 링크를 보내드립니다. 이 링크를 통해 상담 내용을 확인하고 필요에 따라 수정할 수 있습니다.\n\n` +
+                   `링크: ${studentLink}\n\n` +
+                   `궁금한 점이 있다면 언제든지 문의해주세요.\n\n` +
+                   `감사합니다.`;
+
+      GmailApp.sendEmail(studentEmail, subject, body);
+      masterListSheet.getRange(row, CONFIG.col.status).setValue(`이메일 발송 완료 (${new Date().toLocaleTimeString()})`);
+      sentCount++;
+    } catch (e) {
+      const errorMessage = `이메일 발송 실패: ${e.message.substring(0, 100)}`;
+      masterListSheet.getRange(row, CONFIG.col.status).setValue(errorMessage);
+      console.error(`이메일 발송 오류 (${studentName}, ${studentEmail}): ${e.toString()}`);
+      failCount++;
+    }
+  }
+
+  ss.toast("이메일 발송 작업 완료!", "이메일 발송", 10);
+  ui.alert(`이메일 발송 완료!\n\n총 ${sentCount}명에게 이메일을 성공적으로 보냈습니다.\n실패: ${failCount}명.`);
+}
+
+/**
+ * 이메일 주소의 유효성을 간단히 검사합니다.
+ * @param {string} email 이메일 주소
+ * @returns {boolean} 유효하면 true, 그렇지 않으면 false
+ */
+function isValidEmail(email) {
+  // 간단한 이메일 정규식 검사
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
 }
