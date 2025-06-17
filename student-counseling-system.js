@@ -41,9 +41,21 @@ function onOpen() {
 
   ui.createMenu('🚨 초기 설정 (최초 1회)')
     .addItem('모든 학생 파일 생성 및 초기화', 'createAndShareStudentSheets')
+    .addSeparator() // Add this line
+    .addItem('made by 상당고 장운종, 백수연', 'showMadeByInfo') // Add this line
     .addToUi();
 }
 
+
+// 알림창 내용을 변경합니다.
+function showMadeByInfo() {
+  const ui = SpreadsheetApp.getUi();
+  ui.alert(
+    '정보', // 알림창 제목
+    '총괄: 백수연\n제작자: 장운종\n투자자: 이종승\n정신적 지지자: 원창연', // 알림창 내용
+    ui.ButtonSet.OK
+  );
+}
 
 // =========================================================================
 // SCRIPT 2: 파일 생성 & 초기 동기화 (★★ 안정성 및 성능 강화 버전 ★★)
